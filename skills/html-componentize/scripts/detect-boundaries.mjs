@@ -14,7 +14,7 @@
 
 import { resolve } from 'node:path';
 import {
-  walk, structuralHash, structuralSignature, tagSignature, subtreeSize,
+  walk, structuralHash, structuralSignature, tagSignature, subtreeSize, classesIn,
   parseArgs, readJSON, writeJSON,
 } from './lib/domtree.mjs';
 
@@ -73,17 +73,48 @@ function prosOf(node) {
   return { layout, visual, total: decls.length };
 }
 
-// ---- load workspace index (optional) → signature hash map ---------------
-// keyed on TAG signature (class-agnostic) so HTML literal classes can match
-// compiled components that reference styles.x
+// ---- load workspace index (optional) -----------------------------------
+// Matching is layered, weakest signal alone never wins:
+//   1) exact TAG signature (class-agnostic, so styles.x components match)
+//   2) fuzzy: class-vocabulary overlap (Jaccard) + component-name match
+// Mechanical match is only a CANDIDATE — the skill (LLM) confirms.
 let indexByTagSig = new Map();
+let indexComponents = [];
 if (args.index) {
   try {
     const idx = await readJSON(resolve(args.index));
-    for (const comp of idx.components || []) {
+    indexComponents = idx.components || [];
+    for (const comp of indexComponents) {
       if (comp.tagSignature) indexByTagSig.set(comp.tagSignature, comp);
     }
   } catch { /* no index yet — fine for greenfield */ }
+}
+
+function jaccard(a, b) {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+// best reuse candidate for a node: returns { comp, score, reason } or null
+function bestMatch(node, tagSig, name) {
+  if (!indexComponents.length) return null;
+  // 1) exact tag-structure match
+  const exact = indexByTagSig.get(tagSig);
+  if (exact) return { comp: exact, score: 1, reason: `exact tag-structure match` };
+  // 2) fuzzy by class vocabulary + name
+  const nodeClasses = new Set(classesIn(node));
+  let best = null;
+  for (const c of indexComponents) {
+    const classScore = jaccard(nodeClasses, new Set(c.classes || []));
+    const nameScore = c.name && c.name.toLowerCase() === name.toLowerCase() ? 1 : 0;
+    const score = 0.65 * classScore + 0.35 * nameScore;
+    if (score > 0 && (!best || score > best.score)) {
+      best = { comp: c, score, reason: `class overlap ${(classScore * 100).toFixed(0)}%${nameScore ? ` + name match` : ''}` };
+    }
+  }
+  return best && best.score >= 0.5 ? best : null;
 }
 
 // ---- repetition groups --------------------------------------------------
@@ -123,14 +154,24 @@ walk(tree, (node, parent, depth) => {
   let label, reason, confidence = 0.6;
   let extra = {};
 
-  // 1) reuse — CANDIDATE match against an indexed existing component (tag-only
-  //    signature → model must confirm; require non-trivial size to cut noise)
-  const match = size >= 2 ? indexByTagSig.get(tagSig) : null;
+  // 0) document root / body / html is always layout, never a component
+  if (depth === 0 || node.tag === 'body' || node.tag === 'html') {
+    classifications[node.uid] = {
+      tag: node.tag, classes: node.classes, hash, size,
+      label: 'layout', reason: 'document root / body — page host', confidence: 0.9, cssIntent: pr,
+      suggestedName: nameFor(node),
+    };
+    return;
+  }
+
+  // 1) reuse — CANDIDATE match against an indexed existing component
+  //    (exact tag-structure OR fuzzy class/name → model must confirm)
+  const match = size >= 2 ? bestMatch(node, tagSig, nameFor(node)) : null;
   if (match) {
     label = 'reuse';
-    reason = `tag-structure matches existing component ${match.name} (${match.path}) — CONFIRM`;
-    confidence = 0.7;
-    extra.matchedComponent = { name: match.name, path: match.path, props: match.props };
+    reason = `matches existing component ${match.comp.name} (${match.comp.path}) — ${match.reason}; CONFIRM`;
+    confidence = Math.min(0.85, 0.5 + match.score * 0.35);
+    extra.matchedComponent = { name: match.comp.name, path: match.comp.path, props: match.comp.props, matchScore: Number(match.score.toFixed(2)) };
   }
   // 2) repeated item → new-component (the list item)
   else if (repeatedUids.has(node.uid)) {

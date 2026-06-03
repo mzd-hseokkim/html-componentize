@@ -90,18 +90,30 @@ values copied VERBATIM. GATE: data values match the source character-for-charact
 (the script copies them; do not edit them when you emit the data file).
 
 ### Phase 4 — Codegen
-For each `new-component` and each `layout` node that renders a list:
-1. Move its CSS:
+First, plan the directory layout (don't dump files flat):
+```
+node scripts/plan-files.mjs --boundaries .componentize/boundaries.json \
+     --data .componentize/data-spec.json --config .componentize/config.json \
+     --out .componentize/file-plan.json
+```
+`file-plan.json` gives each component its target folder + file paths and import
+graph. Default structure is **co-location** (one folder per component:
+`Card/{Card.tsx, Card.module.css, index.ts}`; the list container also gets its
+`*.data.ts`). Honor `config.structure` (co-location | nested | flat).
+
+Then, for each planned component (`new-component` and list-container `layout`):
+1. Move its CSS into the planned `styles` path:
    ```
    node scripts/css-to-modules.mjs --map .componentize/source-map.json \
-        --classes "<comma,sep,classes,in,subtree>" --out <outDir>/<Name>.module.css \
+        --classes "<comma,sep,classes,in,subtree>" --out <plan.files.styles> \
         --globals <outDir>/global.css
    ```
-2. Write the component using `templates/<framework>/PATTERN.md` as the exact
-   idiom: `className={styles.x}` / `:class`, props from `data-spec.json`, static
-   text inline. Emit the data file with values copied verbatim from `data-spec.json`.
-GATE: no declaration is sourced from computed style; CSS came only from the
-`.module.css` the script emitted.
+2. Write the component at `plan.files.component` using `templates/<framework>/PATTERN.md`
+   as the exact idiom: `className={styles.x}` / `:class`, props from
+   `data-spec.json`, static text inline. Emit the data file (`plan.files.data`)
+   and the `index` re-export. Wire imports per `plan.imports`.
+GATE: files land at their planned paths; no declaration is sourced from computed
+style; CSS came only from the `.module.css` the script emitted.
 
 ### Phase 4.5 — Reuse decision
 For every node labeled `reuse`: import the indexed component, map data-spec

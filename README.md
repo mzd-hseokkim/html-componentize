@@ -16,7 +16,7 @@ style is used only to *verify*, never to generate.
 
 ```
 .claude-plugin/
-  plugin.json           plugin manifest (current: v0.1.2)
+  plugin.json           plugin manifest (current: v0.2.0)
   marketplace.json      so the repo is installable as a marketplace
 commands/
   componentize.md       the /componentize slash command
@@ -25,9 +25,10 @@ skills/html-componentize/
   scripts/              deterministic engine (Node, .mjs)
     detect-project.mjs      infer framework/lang/styling from the project → detected.json
     parse-source.mjs        HTML+CSS → source-map.json
-    index-workspace.mjs     existing+generated components → workspace-index.json
-    detect-boundaries.mjs   classify layout|reuse|new-component|leaf + repetition
+    index-workspace.mjs     existing+generated components (tag-sig + class vocab) → workspace-index.json
+    detect-boundaries.mjs   classify layout|reuse|new-component|leaf; exact+fuzzy reuse match
     extract-data.mjs        instance tree-diff → props + verbatim data array
+    plan-files.mjs          boundary tree → co-location directory plan (file-plan.json)
     css-to-modules.mjs      authored CSS → scoped *.module.css + classMap
     verify-fidelity.mjs     Playwright render + pixel/DOM diff + report.html (gate)
   templates/{react,vue}/  canonical codegen idioms
@@ -184,7 +185,7 @@ that must pass before the next phase runs:
 | 1  | **Parse** HTML + authored CSS + assets | `source-map.json` |
 | 2  | **Classify** each node: layout / reuse / new-component / leaf; find repeated structures | `boundaries.json` |
 | 3  | **Extract data** — diff repeated instances → props + a verbatim data array | `data-spec.json` |
-| 4  | **Codegen** — move CSS into `*.module.css` and write components | component files |
+| 4  | **Plan + codegen** — derive a co-location directory layout, move CSS into `*.module.css`, write components | `file-plan.json`, component files |
 | 4.5| **Reuse decision** — import indexed components instead of generating duplicates | `reuse-decision.json` |
 | 5  | **Verify fidelity** — render original vs result, pixel + DOM diff | `verify-report.json`, **`verify/report.html`** |
 

@@ -46,31 +46,77 @@ function pascalFromFile(file) {
 const LAYOUT_NAME = /(layout|shell|page|wrapper|container|scaffold|app)$/i;
 
 // ---- JSX → signature + props (best effort) ------------------------------
-function jsxToNode(node) {
+// pull class names out of a className value: "a b", styles.card, styles['x'],
+// `${styles.a} b`, clsx(styles.a, 'b') — best-effort, collects every literal/
+// CSS-module member it can see.
+function classesFromExpr(node, acc) {
+  if (!node) return;
+  switch (node.type) {
+    case 'StringLiteral': node.value.trim().split(/\s+/).filter(Boolean).forEach((c) => acc.add(c)); break;
+    case 'MemberExpression': // styles.card
+      if (node.property && !node.computed && node.property.name) acc.add(node.property.name);
+      else if (node.computed && node.property && node.property.type === 'StringLiteral') acc.add(node.property.value);
+      break;
+    case 'TemplateLiteral':
+      node.quasis.forEach((q) => q.value.cooked.trim().split(/\s+/).filter(Boolean).forEach((c) => acc.add(c)));
+      node.expressions.forEach((e) => classesFromExpr(e, acc));
+      break;
+    case 'CallExpression': node.arguments.forEach((a) => classesFromExpr(a, acc)); break; // clsx(...)
+    case 'ConditionalExpression': classesFromExpr(node.consequent, acc); classesFromExpr(node.alternate, acc); break;
+    case 'LogicalExpression': classesFromExpr(node.right, acc); break;
+  }
+}
+
+function jsxToNode(node, classAcc) {
+  // unwrap fragments: represent as a transparent node so its children matter
+  if (node && node.type === 'JSXFragment') {
+    const kids = (node.children || []).map((c) => jsxToNode(c, classAcc)).filter(Boolean);
+    return kids.length === 1 ? kids[0] : { tag: '#fragment', classes: [], children: kids, text: '', attrs: {}, uid: '', idAttr: null };
+  }
   if (!node || node.type !== 'JSXElement') return null;
   const name = node.openingElement.name;
   const tag = name.type === 'JSXIdentifier' ? name.name : 'Frag';
-  let classes = [];
+  const clsSet = new Set();
   for (const a of node.openingElement.attributes) {
-    if (a.type === 'JSXAttribute' && (a.name.name === 'className' || a.name.name === 'class')) {
-      if (a.value && a.value.type === 'StringLiteral') classes = a.value.value.trim().split(/\s+/).filter(Boolean);
+    if (a.type === 'JSXAttribute' && (a.name.name === 'className' || a.name.name === 'class') && a.value) {
+      if (a.value.type === 'StringLiteral') classesFromExpr(a.value, clsSet);
+      else if (a.value.type === 'JSXExpressionContainer') classesFromExpr(a.value.expression, clsSet);
     }
   }
+  const classes = [...clsSet];
+  if (classAcc) classes.forEach((c) => classAcc.add(c));
   const children = [];
   for (const c of node.children || []) {
-    if (c.type === 'JSXElement') { const n = jsxToNode(c); if (n) children.push(n); }
+    if (c.type === 'JSXElement' || c.type === 'JSXFragment') { const n = jsxToNode(c, classAcc); if (n) children.push(n); }
   }
   return { tag, classes, children, text: '', attrs: {}, uid: '', idAttr: null };
 }
 
-function analyzeJsx(code, file) {
-  const out = { props: [], signature: null, tagSig: null };
+function nodeSize(n) { return n ? 1 + (n.children || []).reduce((s, c) => s + nodeSize(c), 0) : 0; }
+
+// read the class vocabulary from an imported CSS module file (authoritative)
+async function moduleCssClasses(code, file) {
+  const out = new Set();
+  const { dirname, resolve: r } = await import('node:path');
+  for (const m of code.matchAll(/import\s+\w+\s+from\s+['"]([^'"]+\.module\.(?:css|scss|sass|less))['"]/g)) {
+    try {
+      const css = await readFile(r(dirname(file), m[1]), 'utf8');
+      for (const cm of css.matchAll(/\.([A-Za-z_][\w-]*)/g)) out.add(cm[1]);
+    } catch { /* ignore missing */ }
+  }
+  return out;
+}
+
+async function analyzeJsx(code, file) {
+  const out = { props: [], signature: null, tagSig: null, classes: [] };
   let ast;
   try {
     ast = babelParser.parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] });
   } catch { return out; }
   const propNames = new Set();
-  let rootJsx = null;
+  const classAcc = new Set();
+  const rootCandidates = []; // JSX that is a return value or arrow body
+
   traverse(ast, {
     TSInterfaceDeclaration(p) {
       if (/Props$/.test(p.node.id.name)) p.node.body.body.forEach((m) => m.key && m.key.name && propNames.add(m.key.name));
@@ -80,25 +126,43 @@ function analyzeJsx(code, file) {
         p.node.typeAnnotation.members.forEach((m) => m.key && m.key.name && propNames.add(m.key.name));
       }
     },
-    // function component first-arg destructuring: function C({ a, b }) {}
+    // component first-arg destructuring (covers fn decl, fn expr, AND arrows)
     Function(p) {
       const param = p.node.params[0];
       if (param && param.type === 'ObjectPattern') {
         param.properties.forEach((pr) => { if (pr.type === 'ObjectProperty' && pr.key.name) propNames.add(pr.key.name); });
       }
+      // arrow with implicit JSX body:  const C = () => (<div/>)
+      if (p.node.type === 'ArrowFunctionExpression' && p.node.body &&
+          (p.node.body.type === 'JSXElement' || p.node.body.type === 'JSXFragment')) {
+        rootCandidates.push(p.node.body);
+      }
     },
     ReturnStatement(p) {
-      if (!rootJsx && p.node.argument && p.node.argument.type === 'JSXElement') rootJsx = p.node.argument;
+      const a = p.node.argument;
+      if (a && (a.type === 'JSXElement' || a.type === 'JSXFragment')) rootCandidates.push(a);
     },
   });
+
   out.props = [...propNames];
-  if (rootJsx) { const n = jsxToNode(rootJsx); if (n) { out.signature = structuralSignature(n); out.tagSig = tagSignature(n); } }
+  // pick the largest JSX root (skips `return null` guards, picks main render)
+  let best = null, bestSize = 0;
+  for (const cand of rootCandidates) {
+    const n = jsxToNode(cand, classAcc);
+    const sz = nodeSize(n);
+    if (n && sz > bestSize) { best = n; bestSize = sz; }
+  }
+  if (best) { out.signature = structuralSignature(best); out.tagSig = tagSignature(best); }
+  // class vocabulary: from JSX usage + authoritative module-css file
+  const cssClasses = await moduleCssClasses(code, file);
+  out.classes = [...new Set([...classAcc, ...cssClasses])];
   return out;
 }
 
 // ---- Vue SFC → signature + props (best effort) --------------------------
-function analyzeVue(code) {
-  const out = { props: [], signature: null, tagSig: null };
+async function analyzeVue(code, file) {
+  const out = { props: [], signature: null, tagSig: null, classes: [] };
+  const classAcc = new Set();
   const tmpl = code.match(/<template[^>]*>([\s\S]*?)<\/template>/i);
   if (tmpl) {
     try {
@@ -106,13 +170,18 @@ function analyzeVue(code) {
       const rootEl = $.root().children().toArray().find((e) => e.type === 'tag');
       if (rootEl) { const n = buildTree($, rootEl); out.signature = structuralSignature(n); out.tagSig = tagSignature(n); }
     } catch { /* ignore */ }
+    // static class="..." and :class="styles.x" / styles['x']
+    for (const m of tmpl[1].matchAll(/\bclass="([^"]*)"/g)) m[1].trim().split(/\s+/).filter(Boolean).forEach((c) => classAcc.add(c));
+    for (const m of tmpl[1].matchAll(/:class="[^"]*?styles(?:\.(\w+)|\[['"]([\w-]+)['"]\])/g)) classAcc.add(m[1] || m[2]);
   }
-  // defineProps({...}) keys  OR  defineProps<{...}>()
+  // defineProps({...}) | defineProps<{...}>() | withDefaults(defineProps<{...}>(), ...)
   const dpObj = code.match(/defineProps\s*\(\s*\{([\s\S]*?)\}\s*\)/);
   const dpType = code.match(/defineProps\s*<\s*\{([\s\S]*?)\}\s*>/);
   const body = (dpObj && dpObj[1]) || (dpType && dpType[1]) || '';
   for (const m of body.matchAll(/(\w+)\s*[?:]/g)) out.props.push(m[1]);
   out.props = [...new Set(out.props)];
+  const cssClasses = await moduleCssClasses(code, file);
+  out.classes = [...new Set([...classAcc, ...cssClasses])];
   return out;
 }
 
@@ -121,7 +190,7 @@ const components = [];
 for (const file of files) {
   const code = await readFile(file, 'utf8');
   const framework = file.endsWith('.vue') ? 'vue' : 'react';
-  const a = framework === 'vue' ? analyzeVue(code) : analyzeJsx(code, file);
+  const a = framework === 'vue' ? await analyzeVue(code, file) : await analyzeJsx(code, file);
   const name = pascalFromFile(file);
   components.push({
     name,
@@ -130,6 +199,7 @@ for (const file of files) {
     props: a.props,
     structuralSignature: a.signature,
     tagSignature: a.tagSig,
+    classes: a.classes,
     kind: LAYOUT_NAME.test(name) ? 'layout' : 'component',
     source: tag,
   });

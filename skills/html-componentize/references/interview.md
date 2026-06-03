@@ -21,6 +21,9 @@ Defaults marked ★.
    is detected.) If integrate: **source root to index** (detected `indexRoot`).
 5. **Output location** — where generated files go (default detected
    `componentsDir`, else `src/components/generated`).
+5b. **Directory structure** — co-location ★ (one folder per component:
+   `Card/{Card.tsx, Card.module.css, index.ts}`) / nested (item folders inside
+   their container) / flat (everything in outDir). Drives `plan-files.mjs`.
 6. **Component granularity** — how aggressively to split? default: extract
    repeated structures + landmark layout; keep one-offs inline unless they have
    clear visual identity.
@@ -42,6 +45,7 @@ Defaults marked ★.
   "mode": "integrate",
   "indexRoot": "src",
   "outDir": "src/components/generated",
+  "structure": "co-location",
   "granularity": "default",
   "assetStrategy": "as-is",
   "interactivity": "presentational",
