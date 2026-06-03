@@ -90,6 +90,17 @@ if (args.index) {
   } catch { /* no index yet — fine for greenfield */ }
 }
 
+// canonicalize a class name so kebab/snake/camel/Pascal all compare equal:
+//   card-title | card_title | cardTitle | CardTitle  →  "cardtitle"
+function normClass(c) {
+  return String(c)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // split camel boundaries
+    .replace(/[-_]+/g, ' ')                 // kebab / snake → spaces
+    .toLowerCase()
+    .replace(/\s+/g, '');                   // join tokens
+}
+const normSet = (arr) => new Set((arr || []).map(normClass));
+
 function jaccard(a, b) {
   if (!a.size || !b.size) return 0;
   let inter = 0;
@@ -104,10 +115,10 @@ function bestMatch(node, tagSig, name) {
   const exact = indexByTagSig.get(tagSig);
   if (exact) return { comp: exact, score: 1, reason: `exact tag-structure match` };
   // 2) fuzzy by class vocabulary + name
-  const nodeClasses = new Set(classesIn(node));
+  const nodeClasses = normSet(classesIn(node));
   let best = null;
   for (const c of indexComponents) {
-    const classScore = jaccard(nodeClasses, new Set(c.classes || []));
+    const classScore = jaccard(nodeClasses, normSet(c.classes));
     const nameScore = c.name && c.name.toLowerCase() === name.toLowerCase() ? 1 : 0;
     const score = 0.65 * classScore + 0.35 * nameScore;
     if (score > 0 && (!best || score > best.score)) {
