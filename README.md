@@ -48,6 +48,16 @@ cd skills/html-componentize/scripts && npm install
 npx playwright install chromium     # phase 5 only
 ```
 
+## Usage
+
+In the target project (cwd = where the HTML lives), either:
+
+- run the command: `/componentize <html-path> [react|vue]`, or
+- just ask in natural language ("이 HTML을 React 컴포넌트로 변환해줘") — the skill
+  auto-triggers.
+
+Artifacts (incl. the side-by-side `verify/report.html`) land in `.componentize/`.
+
 ## Status
 
 Engine smoke-tested end-to-end on `examples/sample`: repetition → `Card` (3×),
