@@ -109,5 +109,52 @@ try {
 const pass = results.every((r) => r.pass);
 const report = { originalUrl, resultUrl, threshold, pass, viewports: results, outDir };
 await writeFile(`${outDir}/verify-report.json`, JSON.stringify(report, null, 2), 'utf8');
-console.log(JSON.stringify(report, null, 2));
+
+// ---- human-readable side-by-side HTML report (self-contained) ----------
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const badge = (ok) => `<span class="badge ${ok ? 'ok' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</span>`;
+const sections = results.map((r) => `
+  <section class="vp ${r.pass ? '' : 'failed'}">
+    <h2>${esc(r.viewport)} ${badge(r.pass)}</h2>
+    <div class="stats">
+      <span>diff: <b>${(r.diffRatio * 100).toFixed(3)}%</b> (${r.diffPixels}px) · threshold ${(threshold * 100).toFixed(2)}%</span>
+      <span>DOM ${r.domMatch ? '✓ match' : '✗ differ'}</span>
+      <span>scroll Δ ${r.scrollHeight.delta}px (orig ${r.scrollHeight.original} / result ${r.scrollHeight.result})</span>
+    </div>
+    <div class="grid">
+      <figure><figcaption>original</figcaption><img src="${esc(r.artifacts.original)}" loading="lazy"></figure>
+      <figure><figcaption>result</figcaption><img src="${esc(r.artifacts.result)}" loading="lazy"></figure>
+      <figure><figcaption>diff</figcaption><img src="${esc(r.artifacts.diff)}" loading="lazy"></figure>
+    </div>
+  </section>`).join('\n');
+const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>Fidelity report ${badge(pass).replace(/<[^>]+>/g, '')}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 24px; background: #fafafa; color: #111; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  h1 { font-size: 18px; margin: 0; }
+  .meta { color: #666; font-size: 12px; word-break: break-all; }
+  .badge { font-weight: 700; font-size: 12px; padding: 2px 8px; border-radius: 999px; color: #fff; }
+  .badge.ok { background: #16a34a; } .badge.fail { background: #dc2626; }
+  section.vp { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin: 16px 0; }
+  section.vp.failed { border-color: #fca5a5; }
+  section h2 { font-size: 15px; margin: 0 0 8px; display: flex; gap: 8px; align-items: center; }
+  .stats { display: flex; gap: 16px; flex-wrap: wrap; color: #555; font-size: 12px; margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  figure { margin: 0; }
+  figcaption { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #888; margin-bottom: 4px; }
+  img { width: 100%; height: auto; border: 1px solid #e5e7eb; border-radius: 6px; background:
+    repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+</style></head><body>
+<header>
+  <h1>Fidelity report</h1> ${badge(pass)}
+  <span class="meta">original: ${esc(originalUrl)} → result: ${esc(resultUrl)}</span>
+</header>
+${sections}
+</body></html>`;
+await writeFile(`${outDir}/report.html`, html, 'utf8');
+
+console.log(JSON.stringify({ ...report, reportHtml: `${outDir}/report.html` }, null, 2));
 process.exit(pass ? 0 : 1);

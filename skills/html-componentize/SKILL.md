@@ -120,10 +120,15 @@ Spin up a dev server rendering the converted top-level component in isolation
 node scripts/verify-fidelity.mjs --original <source.html> --result <http://localhost:PORT> \
      --viewports <from config> --threshold <from config> --out .componentize/verify
 ```
+Besides `verify-report.json` and the per-viewport PNGs, this writes a
+self-contained **`.componentize/verify/report.html`** — a side-by-side
+original / result / diff comparison per viewport with pass/fail + diff %. Always
+point the user to it; it's the human-readable comparison report.
+
 Exit 0 = pass. On fail (`diffRatio > threshold` or `domMatch:false`): open
-`.componentize/verify/diff-<vp>.png`, locate the divergent region, fix the
-cause (usually a missed CSS rule, wrong class scope, or a layout node treated as
-a component), and re-run. **Do not declare success until phase 5 passes.**
+`report.html` (or `diff-<vp>.png`), locate the divergent region, fix the cause
+(usually a missed CSS rule, wrong class scope, or a layout node treated as a
+component), and re-run. **Do not declare success until phase 5 passes.**
 
 ## Unknowns ledger
 Maintain `.componentize/unknowns.md`: anything flagged — `interactions` from
@@ -132,6 +137,7 @@ verify regions you couldn't close. Surface it to the user. Flag, don't guess.
 
 ## Output to the user
 - Files generated/reused (path list) + the reuse-decision summary.
-- `verify-report.json` result (pass + per-viewport diff ratio).
+- The fidelity result + a link to `.componentize/verify/report.html` (the
+  side-by-side comparison report).
 - The unknowns ledger.
 Never claim visual fidelity without a passing `verify-report.json`.
