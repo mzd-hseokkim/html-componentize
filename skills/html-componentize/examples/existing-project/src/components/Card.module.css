@@ -1,0 +1,5 @@
+.card { border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; background: #fff; }
+.cardImg { width: 100%; height: 140px; object-fit: cover; display: block; }
+.cardBody { padding: 16px; }
+.cardTitle { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.cardDesc { font-size: 14px; color: #6b7280; }

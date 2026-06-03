@@ -1,0 +1,16 @@
+{
+  "name": "html-componentize-marketplace",
+  "owner": {
+    "name": "Hyeongseok Kim",
+    "email": "hseokkim@mz.co.kr"
+  },
+  "plugins": [
+    {
+      "name": "html-componentize",
+      "source": "./",
+      "description": "Deterministic HTML+CSS → React/Vue component conversion with fidelity verification.",
+      "version": "0.1.0",
+      "category": "codegen"
+    }
+  ]
+}

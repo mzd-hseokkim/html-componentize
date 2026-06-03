@@ -1,0 +1,5 @@
+node_modules/
+.componentize/
+scripts/node_modules/
+.claude/
+.DS_Store
