@@ -24,6 +24,14 @@ Defaults marked ★.
 5b. **Directory structure** — co-location ★ (one folder per component:
    `Card/{Card.tsx, Card.module.css, index.ts}`) / nested (item folders inside
    their container) / flat (everything in outDir). Drives `plan-files.mjs`.
+5c. 🔍 **Layout strategy** — how page chrome (header/nav/footer) is handled.
+   Detected from `routing` (react-router/next/vue-router/nuxt) + existing layout:
+   - `reuse-layout` ★ if an existing layout is found — page renders only its
+     content into that layout's outlet; don't regenerate chrome.
+   - `hoist` if routing exists but no layout — generate a shared Layout + outlet,
+     page becomes a route component (chrome NOT duplicated per page).
+   - `inline` if no router / standalone page — chrome stays in the page.
+   Confirm when `ambiguities` flags it.
 6. **Component granularity** — how aggressively to split? default: extract
    repeated structures + landmark layout; keep one-offs inline unless they have
    clear visual identity.
@@ -46,6 +54,8 @@ Defaults marked ★.
   "indexRoot": "src",
   "outDir": "src/components/generated",
   "structure": "co-location",
+  "layoutStrategy": "reuse-layout",
+  "routing": { "library": "react-router", "outlet": "<Outlet/>", "hasLayout": true, "layoutPath": "src/Layout.tsx" },
   "granularity": "default",
   "assetStrategy": "as-is",
   "interactivity": "presentational",

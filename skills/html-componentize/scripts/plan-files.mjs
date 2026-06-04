@@ -32,6 +32,8 @@ const framework = args.framework || cfg.framework || 'react';
 const lang = args.lang || cfg.lang || 'ts';
 const outDir = (args.outDir || cfg.outDir || 'src/components/generated').replace(/\\/g, '/').replace(/\/$/, '');
 const structure = args.structure || cfg.structure || 'co-location';
+const layoutStrategy = args.layoutStrategy || cfg.layoutStrategy || 'inline'; // reuse-layout | hoist | inline
+const routing = cfg.routing || { library: null, outlet: null, hasLayout: false, layoutPath: null };
 
 const boundaries = await readJSON(bPath);
 const dataSpec = await (async () => { try { return await readJSON(dPath); } catch { return { groups: [] }; } })();
@@ -102,9 +104,41 @@ const components = [...comps.values()].map((comp) => {
   return { name: comp.name, kind: comp.kind, dir, files, classes: comp.classes, imports: comp.imports, sourceUids: comp.uids };
 });
 
-await writeJSON(outPath, { framework, lang, outDir, structure, components });
+// ---- layout plan: separate page CHROME from route content ---------------
+// chrome (header/nav/footer) → shared layout + outlet, not duplicated per page.
+const chrome = Object.entries(boundaries.classifications)
+  .filter(([, c]) => c.shellRole === 'chrome')
+  .map(([uid, c]) => ({ uid, tag: c.tag, name: c.suggestedName || c.tag, classes: c.classes }));
+const contentNode = Object.entries(boundaries.classifications)
+  .find(([, c]) => c.shellRole === 'page-content');
+
+let layout;
+if (chrome.length === 0 || layoutStrategy === 'inline') {
+  layout = { strategy: 'inline', note: 'no routing/layout — chrome stays in the page component' };
+} else if (layoutStrategy === 'reuse-layout' && routing.layoutPath) {
+  layout = {
+    strategy: 'reuse-layout',
+    existingLayout: routing.layoutPath,
+    outlet: routing.outlet,
+    chrome: chrome.map((c) => c.name),
+    instruction: `Do NOT regenerate chrome. The page renders ONLY its content (${contentNode ? contentNode[1].suggestedName || 'main' : 'main'}) into the existing layout's outlet (${routing.outlet}). Reconcile chrome only if the existing layout lacks it.`,
+  };
+} else { // hoist
+  const dir = structure === 'flat' ? outDir : `${outDir}/Layout`;
+  layout = {
+    strategy: 'hoist',
+    component: { name: 'Layout', dir, files: { component: `${dir}/Layout.${compExt}`, styles: `${dir}/Layout.module.css`, ...(structure !== 'flat' ? { index: `${dir}/index.${codeExt}` } : {}) } },
+    outlet: routing.outlet || (framework === 'vue' ? '<router-view/> or <slot/>' : '<Outlet/>'),
+    chrome: chrome.map((c) => c.name),
+    routerLibrary: routing.library,
+    instruction: `Generate a shared Layout containing the chrome (${chrome.map((c) => c.name).join(', ') || 'header/footer'}) with an outlet where route content renders. The page becomes a ROUTE component holding only its content — not the chrome. Wire it per ${routing.library || 'the router'}.`,
+  };
+}
+
+await writeJSON(outPath, { framework, lang, outDir, structure, layoutStrategy, routing, layout, components });
 
 console.log(JSON.stringify({
   ok: true, out: outPath, framework, lang, structure, outDir,
+  layout: { strategy: layout.strategy, chrome: layout.chrome || [], outlet: layout.outlet || null, existingLayout: layout.existingLayout || null },
   components: components.map((c) => ({ name: c.name, kind: c.kind, dir: c.dir, files: Object.values(c.files).length, imports: c.imports.map((i) => `${i.name}:${i.kind}`) })),
 }, null, 2));

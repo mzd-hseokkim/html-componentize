@@ -45,7 +45,9 @@ The skill usually runs INSIDE the target project, so detect first:
 ```
 node scripts/detect-project.mjs --root . --out .componentize/detected.json
 ```
-This infers framework, language, styling, mode, indexRoot, componentsDir from
+This infers framework, language, styling, mode, indexRoot, componentsDir, AND
+**routing/layout convention** (`routing` = react-router/next/vue-router/nuxt +
+existing layout path; `layoutStrategy` = reuse-layout | hoist | inline) from
 `package.json` + config files + a file scan. Then:
 - Present the detected config to the user for a one-line confirm.
 - Ask the questions in `references/interview.md` ONLY for fields not detected or
@@ -106,6 +108,16 @@ node scripts/plan-files.mjs --boundaries .componentize/boundaries.json \
 graph. Default structure is **co-location** (one folder per component:
 `Card/{Card.tsx, Card.module.css, index.ts}`; the list container also gets its
 `*.data.ts`). Honor `config.structure` (co-location | nested | flat).
+
+**Layout (`file-plan.layout`)** — page chrome (header/nav/footer, marked
+`shellRole:'chrome'`) does NOT get duplicated into the page:
+- `reuse-layout`: render ONLY the page content into the existing layout's outlet
+  (`routing.outlet`, e.g. `<Outlet/>`, `<router-view/>`, Next layout children).
+  Don't regenerate chrome; reconcile only if the layout lacks it.
+- `hoist`: generate the planned shared `Layout` with an outlet; the page becomes
+  a route component holding only its content. Wire per `routing.library`.
+- `inline`: standalone page — chrome stays in the page component.
+Follow `file-plan.layout.instruction`.
 
 Then, for each planned component (`new-component` and list-container `layout`):
 1. Move its CSS into the planned `styles` path:

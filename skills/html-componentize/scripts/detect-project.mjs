@@ -89,8 +89,36 @@ if (await exists('pnpm-lock.yaml')) packageManager = 'pnpm';
 else if (await exists('yarn.lock')) packageManager = 'yarn';
 else if (await exists('bun.lockb')) packageManager = 'bun';
 
+// ---- routing / layout convention ---------------------------------------
+// Layout chrome (header/nav/footer) belongs in a shared layout + outlet, not
+// duplicated per page. Detect the project's convention so codegen conforms.
+let router = null, outlet = null;
+const anyExists = async (...ps) => { for (const p of ps) if (await exists(p)) return p; return null; };
+if (has('next')) {
+  router = 'next';
+  const appLayout = await anyExists('app/layout.tsx', 'app/layout.jsx', 'src/app/layout.tsx', 'src/app/layout.jsx');
+  outlet = appLayout ? 'app-router: children prop in layout.tsx' : 'pages-router: _app.tsx wrapper';
+} else if (has('@remix-run/react') || has('@remix-run/node')) { router = 'remix'; outlet = '<Outlet/>'; }
+else if (has('@tanstack/react-router')) { router = 'tanstack-router'; outlet = '<Outlet/>'; }
+else if (has('react-router-dom') || has('react-router')) { router = 'react-router'; outlet = '<Outlet/>'; }
+else if (has('nuxt')) { router = 'nuxt'; outlet = 'layouts/ + <slot/> ; pages + <NuxtPage/>'; }
+else if (has('vue-router')) { router = 'vue-router'; outlet = '<router-view/>'; }
+
+// existing layout component / convention dir
+const layoutPath = await anyExists(
+  'app/layout.tsx', 'app/layout.jsx', 'src/app/layout.tsx', 'src/app/layout.jsx',
+  'src/layouts', 'layouts', 'app.vue', 'src/App.vue',
+  'src/components/Layout.tsx', 'src/components/Layout.jsx', 'src/components/Layout.vue',
+  'src/layouts/default.vue', 'src/components/AppShell.tsx', 'src/components/AppLayout.tsx',
+);
+const routing = { library: router, outlet, hasLayout: !!layoutPath, layoutPath: layoutPath || null };
+note(`routing: ${router || 'none detected'}${layoutPath ? `, layout at ${layoutPath}` : ', no layout found'}`);
+
 // ---- ambiguities to resolve in the interview ----------------------------
 const ambiguities = [];
+if (router && !layoutPath) ambiguities.push(`layout: ${router} routing but no shared layout found — confirm strategy (hoist chrome into a new shared layout+outlet vs inline per page)`);
+if (router && layoutPath) ambiguities.push(`layout: existing layout at ${layoutPath} — prefer reusing it (page = route content only), confirm`);
+if (!router) ambiguities.push('layout: no router detected — treat as standalone page (inline chrome) unless told otherwise');
 if (!framework) ambiguities.push('framework: could not detect a single framework — ASK (react/vue)');
 if (frameworkConfidence && frameworkConfidence < 0.9) ambiguities.push('framework: low-confidence guess — CONFIRM');
 if (stylingCandidates.length > 1) ambiguities.push(`styling: multiple in use (${stylingCandidates.join(', ')}) — CONFIRM primary`);
@@ -102,6 +130,10 @@ const detected = {
   lang, styling, stylingCandidates,
   mode: (framework || componentsDir) ? 'integrate' : 'greenfield',
   indexRoot, componentsDir, packageManager,
+  routing,
+  // default layout strategy: reuse existing layout if present, else hoist into a
+  // shared layout+outlet when routing exists, else inline (standalone page)
+  layoutStrategy: routing.hasLayout ? 'reuse-layout' : (router ? 'hoist' : 'inline'),
   signals,
 };
 await writeJSON(outPath, { detected, ambiguities });

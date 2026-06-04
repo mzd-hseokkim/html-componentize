@@ -16,19 +16,19 @@ style is used only to *verify*, never to generate.
 
 ```
 .claude-plugin/
-  plugin.json           plugin manifest (current: v0.3.0)
+  plugin.json           plugin manifest (current: v0.4.0)
   marketplace.json      so the repo is installable as a marketplace
 commands/
   componentize.md       the /componentize slash command
 skills/html-componentize/
   SKILL.md              orchestration playbook (the skill entrypoint)
   scripts/              deterministic engine (Node, .mjs)
-    detect-project.mjs      infer framework/lang/styling from the project → detected.json
+    detect-project.mjs      infer framework/lang/styling/routing+layout from the project → detected.json
     parse-source.mjs        HTML+CSS → source-map.json (incl. inline-SVG rawHTML + head font assets)
     index-workspace.mjs     existing+generated components (tag-sig + class vocab) → workspace-index.json
     detect-boundaries.mjs   classify layout|reuse|new-component|leaf; exact+fuzzy reuse match
     extract-data.mjs        instance tree-diff → props + verbatim data array
-    plan-files.mjs          boundary tree → co-location directory plan (file-plan.json)
+    plan-files.mjs          boundary tree → co-location dir plan + layout/chrome strategy (file-plan.json)
     css-to-modules.mjs      authored CSS → scoped *.module.css + classMap
     verify-fidelity.mjs     Playwright render (waits fonts, full page) + global/local/DOM diff gate + report.html
   templates/{react,vue}/  canonical codegen idioms

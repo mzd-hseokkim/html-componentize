@@ -52,6 +52,10 @@ const VISUAL_PROPS = new Set([
 const LAYOUT_TAGS = new Set(['header', 'footer', 'nav', 'main', 'aside', 'section']);
 const LAYOUT_CLASS = /\b(container|wrapper|row|col(umn)?|grid|layout|page|content|main|sidebar|header|footer|nav|section|inner|outer|flex)\b/i;
 const LEAF_TAGS = new Set(['span', 'p', 'b', 'i', 'em', 'strong', 'small', 'br', 'hr', 'img', 'a', 'label', 'svg', 'path', 'code', 'time']);
+// page chrome (→ shared layout) vs route-specific content
+const CHROME_TAG = new Set(['header', 'footer', 'nav']);
+const CHROME_CLASS = /\b(site-?header|site-?footer|app-?header|app-?footer|navbar|topbar|masthead|global-?nav|gnb|header|footer|sidebar)\b/i;
+const CONTENT_CLASS = /\b(page-?content|main-?content|route|outlet|view|page-?body)\b/i;
 
 const MIN_REPEAT = Number(args.minRepeat || 2);
 
@@ -229,9 +233,18 @@ walk(tree, (node, parent, depth) => {
     if (label !== 'leaf-markup') extra.suggestedName = nameFor(node);
   }
 
+  // shellRole — separates page CHROME (header/nav/footer, hoist into a shared
+  // layout) from PAGE CONTENT (the route-specific region). Shallow nodes only;
+  // the LLM uses this + detected routing to decide hoist vs inline.
+  let shellRole;
+  if (depth <= 2) {
+    if (CHROME_TAG.has(node.tag) || node.classes.some((c) => CHROME_CLASS.test(c))) shellRole = 'chrome';
+    else if (node.tag === 'main' || node.classes.some((c) => CONTENT_CLASS.test(c))) shellRole = 'page-content';
+  }
+
   classifications[node.uid] = {
     tag: node.tag, classes: node.classes, hash, size,
-    label, reason, confidence, cssIntent: pr, ...extra,
+    label, reason, confidence, cssIntent: pr, ...(shellRole ? { shellRole } : {}), ...extra,
   };
 });
 
