@@ -32,12 +32,15 @@ const outPath = resolve(args.out || '.componentize/coupling-report.json');
 const norm = (p) => p.replace(/\\/g, '/');
 const relToCwd = (p) => norm(relative(process.cwd(), p));
 
-// feature roots: dirs whose immediate child is a feature/page name
-const FEATURE_ROOTS = [componentsDir, 'src/pages', 'src/features', 'src/views', 'src/routes', 'src/screens', 'pages', 'features']
-  .map((p) => norm(resolve(p)));
+// LAYERS. Cross-LAYER imports in the natural direction (page → component →
+// shared) are fine — a page composing components is intended, not coupling.
+// Coupling = SAME-layer, cross-FEATURE imports (componentsDir/A → componentsDir/B).
+const componentsAbs = norm(resolve(componentsDir));
 const sharedAbs = norm(resolve(sharedDir));
+const PAGE_ROOTS = ['src/pages', 'src/features', 'src/views', 'src/routes', 'src/screens', 'pages', 'features', 'views', 'routes']
+  .map((p) => norm(resolve(p)));
 // exact segment names that are ALWAYS shared (allowed import targets)
-const SHARED_NAMES = new Set(['common', 'shared', 'ui', 'primitive', 'primitives', 'layout', 'layouts', 'lib', 'hooks', 'utils', 'icons', 'components']);
+const SHARED_NAMES = new Set(['common', 'shared', 'ui', 'primitive', 'primitives', 'layout', 'layouts', 'lib', 'hooks', 'utils', 'icons']);
 
 // ---- alias map from tsconfig/jsconfig paths (+ sensible defaults) --------
 function stripJsonComments(s) {
@@ -71,17 +74,30 @@ function resolveSpec(spec, fromFile) {
   return null; // bare import (node_modules / unknown) → ignore
 }
 
-// feature of an absolute path: { feature, shared } | null
-function featureOf(absPath) {
+// classify a path → { layer, feature, shared } | null
+//  - feature is the first DIRECTORY segment under a layer root. A file directly
+//    under the root (src/pages/CartPage.tsx) is NOT a feature (features are dirs).
+function under(p, rootDir) {
+  if (p !== rootDir && !p.startsWith(rootDir + '/')) return null;
+  return p.slice(rootDir.length + 1).split('/'); // parts after the root
+}
+function classify(absPath) {
   const p = norm(absPath);
-  if (p.startsWith(sharedAbs + '/') || p === sharedAbs) return { shared: true };
-  for (const rootDir of FEATURE_ROOTS) {
-    if (p === rootDir || p.startsWith(rootDir + '/')) {
-      const seg = p.slice(rootDir.length + 1).split('/')[0];
-      if (!seg) return null;
-      if (SHARED_NAMES.has(seg)) return { shared: true };
-      return { feature: seg, shared: false };
-    }
+  if (p === sharedAbs || p.startsWith(sharedAbs + '/')) return { layer: 'shared', shared: true };
+  let parts = under(p, componentsAbs);
+  if (parts) {
+    const seg = parts[0];
+    if (SHARED_NAMES.has(seg)) return { layer: 'shared', shared: true };
+    if (parts.length < 2) return { layer: 'component', feature: null }; // file directly in componentsDir
+    return { layer: 'component', feature: seg };
+  }
+  for (const rootDir of PAGE_ROOTS) {
+    parts = under(p, rootDir);
+    if (!parts) continue;
+    const seg = parts[0];
+    if (SHARED_NAMES.has(seg)) return { layer: 'shared', shared: true };
+    if (parts.length < 2) return { layer: 'page', feature: null }; // flat page file (CartPage.tsx)
+    return { layer: 'page', feature: seg };
   }
   return null;
 }
@@ -92,6 +108,7 @@ async function walk(dir, acc = []) {
     if (e.name === 'node_modules' || e.name.startsWith('.') || e.name === 'dist' || e.name === 'build') continue;
     const full = resolve(dir, e.name);
     if (e.isDirectory()) await walk(full, acc);
+    else if (/\.(test|spec|stories)\./.test(e.name)) continue; // tests/stories aren't app coupling
     else if (/\.(tsx|jsx|vue|ts|js|mjs)$/.test(e.name)) acc.push(norm(full));
   }
   return acc;
@@ -102,15 +119,17 @@ const files = await walk(root);
 const violations = [];
 for (const file of files) {
   let code = ''; try { code = await readFile(file, 'utf8'); } catch { continue; }
-  const fInfo = featureOf(file);
-  if (!fInfo || fInfo.shared || !fInfo.feature) continue; // only feature-owned files can violate
+  const fi = classify(file);
+  if (!fi || fi.shared || !fi.feature) continue; // only a feature-owned file can violate
   for (const m of code.matchAll(IMPORT_RE)) {
     const spec = m[1] || m[2];
     const target = resolveSpec(spec, file);
     if (!target) continue;
-    const tInfo = featureOf(target);
-    if (tInfo && tInfo.feature && !tInfo.shared && tInfo.feature !== fInfo.feature) {
-      violations.push({ from: relToCwd(file), importsFrom: relToCwd(target), spec, fromFeature: fInfo.feature, toFeature: tInfo.feature, fix: 'hoist the imported component to sharedDir, then import it from there' });
+    const ti = classify(target);
+    // violation = SAME layer, different feature, target not shared.
+    // (cross-layer page→component / →shared is intended composition, not coupling.)
+    if (ti && ti.feature && !ti.shared && ti.layer === fi.layer && ti.feature !== fi.feature) {
+      violations.push({ from: relToCwd(file), importsFrom: relToCwd(target), spec, layer: fi.layer, fromFeature: fi.feature, toFeature: ti.feature, fix: 'hoist the imported component to sharedDir, then import it from there' });
     }
   }
 }

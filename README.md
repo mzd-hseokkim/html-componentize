@@ -16,7 +16,7 @@ style is used only to *verify*, never to generate.
 
 ```
 .claude-plugin/
-  plugin.json           plugin manifest (current: v0.6.1)
+  plugin.json           plugin manifest (current: v0.6.2)
   marketplace.json      so the repo is installable as a marketplace
 commands/
   componentize.md       the /componentize slash command
