@@ -161,9 +161,16 @@ Then, for each planned component (`new-component` and list-container `layout`):
 4. **Head/font assets**: wire `document.fontLinks`/`headLinks` into the app
    `index.html` `<head>` and import the global stylesheet (`global.css`, holds
    `@font-face`) at the app entry.
+5. **Neutralize scaffold CSS** (`detected.scaffoldStyles`): `npm create vite`/CRA
+   ship `index.css`/`App.css` with opinionated defaults — `button{padding:.6em 1.2em}`,
+   `:root{}`, `body{place-items:center}`, `#root{max-width;padding}` — that OVERRIDE
+   the UA defaults the source relied on and silently break layout (e.g. an icon
+   button's padding eats its width → the inner `<svg>` collapses to a few px).
+   Remove or override these boilerplate rules so the authored CSS fully owns base
+   styling. Flag what you removed in the unknowns ledger.
 GATE: files land at their planned paths; every `rawHTML` node rendered; head
-font assets wired; no declaration is sourced from computed style; CSS came only
-from the `.module.css` the script emitted.
+font assets wired; scaffold defaults neutralized; no declaration is sourced from
+computed style; CSS came only from the `.module.css` the script emitted.
 
 ### Phase 4.5 — Reuse decision
 For every node labeled `reuse`: import the indexed component, map data-spec

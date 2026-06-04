@@ -55,6 +55,17 @@ components, each with a structural signature. Re-index after every codegen so
 the next page reuses what this page produced. This is what prevents N copies of
 the same Button across a multi-page migration — the gap no existing tool fills.
 
+## Neutralize scaffold CSS (host contamination)
+
+The source HTML relies on browser UA defaults. A Vite/CRA scaffold ships
+`index.css`/`App.css` with opinionated resets (`button{padding:.6em 1.2em}`,
+`:root{}`, `body{place-items:center}`, `#root{...}`) that OVERRIDE those UA
+defaults and silently break layout — e.g. an icon button's padding eats its
+width and the inner `<svg>` collapses to a few pixels. Fidelity isn't only about
+carrying the authored CSS; it's also removing host styles the original never had.
+`detect-project` flags these (`scaffoldStyles`); phase 4 neutralizes them. The
+render-and-diff gate is the backstop for what slips through.
+
 ## Flag, don't guess (interactivity)
 
 Inline `onclick`, `<script>` blocks, and any behavior the pipeline can't

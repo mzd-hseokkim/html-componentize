@@ -83,6 +83,25 @@ for (const c of ['src/components', 'components', 'src/lib/components', 'app/comp
   if (await exists(c)) { componentsDir = c; break; }
 }
 
+// ---- scaffold boilerplate CSS (the silent layout-breaker) ---------------
+// `npm create vite` / CRA ship index.css + App.css with opinionated defaults
+// (button{padding:.6em 1.2em}, :root{}, body{place-items:center}, #root{...}).
+// These OVERRIDE the UA defaults the source HTML relied on and break layout
+// (e.g. icon buttons collapse). Detect so the skill can neutralize them.
+const scaffoldStyles = [];
+for (const p of ['src/index.css', 'src/App.css', 'index.css', 'App.css', 'src/main.css']) {
+  if (!(await exists(p))) continue;
+  let css = '';
+  try { css = await readFile(resolve(root, p), 'utf8'); } catch { continue; }
+  const sig = [];
+  if (/button\s*\{[^}]*padding:\s*0?\.6em\s+1\.2em/s.test(css)) sig.push('vite button padding 0.6em 1.2em');
+  if (/#root\s*\{/.test(css)) sig.push('#root rule');
+  if (/place-items:\s*center/.test(css)) sig.push('body place-items:center');
+  if (/:root\s*\{[^}]*(color-scheme|font-family)/s.test(css)) sig.push(':root defaults');
+  if (/\.App-logo|\.read-the-docs|\.logo/.test(css)) sig.push('CRA/Vite template classes');
+  if (sig.length) scaffoldStyles.push({ path: p, signals: sig });
+}
+
 // ---- package manager ----------------------------------------------------
 let packageManager = 'npm';
 if (await exists('pnpm-lock.yaml')) packageManager = 'pnpm';
@@ -124,6 +143,7 @@ const ambiguities = [];
 if (router && !layoutPath) ambiguities.push(`layout: ${router} routing but no shared layout found — confirm strategy (hoist chrome into a new shared layout+outlet vs inline per page)`);
 if (router && layoutPath) ambiguities.push(`layout: existing layout at ${layoutPath} — prefer reusing it (page = route content only), confirm`);
 if (!router) ambiguities.push('layout: no router detected — treat as standalone page (inline chrome) unless told otherwise');
+if (scaffoldStyles.length) ambiguities.push(`scaffold CSS: ${scaffoldStyles.map((s) => s.path).join(', ')} ship opinionated defaults (button padding, :root, #root, body) that OVERRIDE the source's UA defaults and break layout (collapsed icon buttons etc.) — NEUTRALIZE them (remove/override) before trusting the converted styles`);
 if (!framework) ambiguities.push('framework: could not detect a single framework — ASK (react/vue)');
 if (frameworkConfidence && frameworkConfidence < 0.9) ambiguities.push('framework: low-confidence guess — CONFIRM');
 if (stylingCandidates.length > 1) ambiguities.push(`styling: multiple in use (${stylingCandidates.join(', ')}) — CONFIRM primary`);
@@ -135,6 +155,7 @@ const detected = {
   lang, styling, stylingCandidates,
   mode: (framework || componentsDir) ? 'integrate' : 'greenfield',
   indexRoot, componentsDir, packageManager,
+  scaffoldStyles,
   routing,
   // default layout strategy: reuse existing layout if present, else hoist into a
   // shared layout+outlet when routing exists, else inline (standalone page)
