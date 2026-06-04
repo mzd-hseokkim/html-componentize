@@ -16,7 +16,7 @@ style is used only to *verify*, never to generate.
 
 ```
 .claude-plugin/
-  plugin.json           plugin manifest (current: v0.4.1)
+  plugin.json           plugin manifest (current: v0.5.0)
   marketplace.json      so the repo is installable as a marketplace
 commands/
   componentize.md       the /componentize slash command
@@ -28,7 +28,8 @@ skills/html-componentize/
     index-workspace.mjs     existing+generated components (tag-sig + class vocab) → workspace-index.json
     detect-boundaries.mjs   classify layout|reuse|new-component|leaf; exact+fuzzy reuse match
     extract-data.mjs        instance tree-diff → props + verbatim data array
-    plan-files.mjs          boundary tree → co-location dir plan + layout/chrome strategy (file-plan.json)
+    plan-files.mjs          boundary tree → co-location dir plan + layout/chrome strategy + write-mode (file-plan.json)
+    manifest.mjs            record generated files (path+hash) so re-runs reconcile, not blind-overwrite
     css-to-modules.mjs      authored CSS → scoped *.module.css + classMap
     verify-fidelity.mjs     Playwright render (waits fonts, full page) + global/local/DOM diff gate + report.html
   templates/{react,vue}/  canonical codegen idioms

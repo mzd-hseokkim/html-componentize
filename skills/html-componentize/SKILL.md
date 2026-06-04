@@ -88,6 +88,9 @@ GATE: parse ok; note any `rawMarkupNodes` and fonts in the summary.
 ```
 node scripts/detect-boundaries.mjs --in .componentize/source-map.json \
      --out .componentize/boundaries.json [--index .componentize/workspace-index.json]
+# RE-CONVERTING the same page? add: --manifest .componentize/manifest.json --self <source.html>
+# (excludes THIS page's own prior output from reuse-matching so it regenerates,
+#  instead of matching itself as "reuse")
 ```
 Labels each node `layout | reuse | new-component | leaf-markup`, finds
 repetition groups (structural-hash), matches the index for reuse.
@@ -109,12 +112,27 @@ First, plan the directory layout (don't dump files flat):
 ```
 node scripts/plan-files.mjs --boundaries .componentize/boundaries.json \
      --data .componentize/data-spec.json --config .componentize/config.json \
-     --index .componentize/workspace-index.json --out .componentize/file-plan.json
+     --index .componentize/workspace-index.json --manifest .componentize/manifest.json \
+     --out .componentize/file-plan.json
 ```
 `file-plan.json` gives each component its target folder + file paths and import
 graph. Default structure is **co-location** (one folder per component:
 `Card/{Card.tsx, Card.module.css, index.ts}`; the list container also gets its
 `*.data.ts`). Honor `config.structure` (co-location | nested | flat).
+
+**Re-conversion (`file-plan.reconvert` + per-component `writeMode`)** — when a
+target already exists, do NOT blind-overwrite. Honor `writeMode`:
+- `create` — write fresh.
+- `overwrite` — we generated it and it's unchanged → safe to regenerate.
+- `reconcile` — we generated it but it was HAND-EDITED since. **Surgically
+  update**: regenerate only the deterministic parts (the `.module.css` via
+  css-to-modules, the data file, props/structure to match the new source) and
+  apply them to the existing file, PRESERVING manual edits (handlers, extra
+  props) that don't conflict. Show the user a diff.
+- `foreign` — a file we never generated. **Never overwrite.** Surface it to the
+  user and ask (rename, pick another path, or explicit overwrite).
+This is the default **surgical update** behavior — update existing source to
+match reality, not blind regeneration.
 
 **Layout (`file-plan.layout`)** — page chrome (header/nav/footer, marked
 `shellRole:'chrome'`) does NOT get duplicated into the page:
@@ -156,6 +174,15 @@ exists in the index. If you generated a component, re-index:
 node scripts/index-workspace.mjs --root <outDir> --out .componentize/workspace-index.json --tag generated
 ```
 (append generated entries so the next page reuses them).
+
+### Phase 4.6 — Manifest (record what we generated)
+Snapshot the files this run produced so a future re-conversion can tell
+overwrite/reconcile/foreign apart:
+```
+node scripts/manifest.mjs --plan .componentize/file-plan.json --source <source.html> \
+     --out .componentize/manifest.json
+```
+GATE: manifest updated after every codegen.
 
 ### Phase 5 — Verify fidelity (the proof)
 Spin up a dev server rendering the converted top-level component in isolation

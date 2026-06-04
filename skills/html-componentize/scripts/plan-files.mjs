@@ -19,6 +19,8 @@
 //   (framework/lang/outDir/structure read from config; override with flags)
 
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFile as fsReadFile } from 'node:fs/promises';
 import { parseArgs, readJSON, writeJSON } from './lib/domtree.mjs';
 
 const args = parseArgs(process.argv.slice(2));
@@ -51,6 +53,23 @@ if (!routing.layoutPath && indexLayout) { routing.layoutPath = indexLayout.path;
 
 const boundaries = await readJSON(bPath);
 const dataSpec = await (async () => { try { return await readJSON(dPath); } catch { return { groups: [] }; } })();
+
+// ---- idempotent re-conversion: classify each target file's write mode ----
+// manifest records what WE generated (path → hash). On re-run:
+//   create     — no file there → write fresh
+//   overwrite  — exists, ours, unchanged since we made it → safe to regenerate
+//   reconcile  — exists, ours, but HAND-EDITED since → surgical update + diff
+//   foreign    — exists, NOT ours → never blind-overwrite; surface to the user
+const manifestPath = resolve(args.manifest || '.componentize/manifest.json');
+let manifest = { files: {} };
+try { manifest = await readJSON(manifestPath); } catch { /* first run */ }
+async function classifyFile(relPath) {
+  let cur = null;
+  try { cur = createHash('sha1').update(await fsReadFile(resolve(relPath))).digest('hex'); } catch { return 'create'; }
+  const rec = manifest.files && manifest.files[relPath];
+  if (!rec) return 'foreign';
+  return rec.hash === cur ? 'overwrite' : 'reconcile';
+}
 
 const compExt = framework === 'vue' ? 'vue' : (lang === 'ts' ? 'tsx' : 'jsx');
 const codeExt = lang === 'ts' ? 'ts' : 'js';
@@ -107,7 +126,8 @@ function dirFor(comp) {
   return `${outDir}/${comp.name}`;
 }
 
-const components = [...comps.values()].map((comp) => {
+const components = [];
+for (const comp of comps.values()) {
   const dir = dirFor(comp);
   const files = {
     component: `${dir}/${comp.name}.${compExt}`,
@@ -115,8 +135,9 @@ const components = [...comps.values()].map((comp) => {
   };
   if (structure !== 'flat') files.index = `${dir}/index.${codeExt}`;
   if (comp.hasData) files.data = `${dir}/${comp.dataName}.data.${codeExt}`;
-  return { name: comp.name, kind: comp.kind, dir, files, classes: comp.classes, imports: comp.imports, sourceUids: comp.uids };
-});
+  const writeMode = await classifyFile(files.component);
+  components.push({ name: comp.name, kind: comp.kind, dir, files, writeMode, classes: comp.classes, imports: comp.imports, sourceUids: comp.uids });
+}
 
 // ---- layout plan: separate page CHROME from route content ---------------
 // chrome (header/nav/footer) → shared layout + outlet, not duplicated per page.
@@ -153,10 +174,23 @@ if (chrome.length === 0 || effectiveStrategy === 'inline') {
   };
 }
 
-await writeJSON(outPath, { framework, lang, outDir, structure, layoutStrategy, routing, layout, components });
+if (layout.component) layout.writeMode = await classifyFile(layout.component.files.component);
+
+const modeCounts = {};
+for (const c of components) modeCounts[c.writeMode] = (modeCounts[c.writeMode] || 0) + 1;
+const reconvert = {
+  isReconversion: components.some((c) => c.writeMode !== 'create'),
+  modes: modeCounts,
+  foreign: components.filter((c) => c.writeMode === 'foreign').map((c) => c.files.component),
+  reconcile: components.filter((c) => c.writeMode === 'reconcile').map((c) => c.files.component),
+  manifest: manifestPath,
+};
+
+await writeJSON(outPath, { framework, lang, outDir, structure, layoutStrategy, routing, layout, reconvert, components });
 
 console.log(JSON.stringify({
   ok: true, out: outPath, framework, lang, structure, outDir,
   layout: { strategy: layout.strategy, chrome: layout.chrome || [], outlet: layout.outlet || null, existingLayout: layout.existingLayout || null },
-  components: components.map((c) => ({ name: c.name, kind: c.kind, dir: c.dir, files: Object.values(c.files).length, imports: c.imports.map((i) => `${i.name}:${i.kind}`) })),
+  reconvert,
+  components: components.map((c) => ({ name: c.name, kind: c.kind, dir: c.dir, writeMode: c.writeMode, imports: c.imports.map((i) => `${i.name}:${i.kind}`) })),
 }, null, 2));

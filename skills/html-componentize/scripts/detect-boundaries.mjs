@@ -88,6 +88,17 @@ if (args.index) {
   try {
     const idx = await readJSON(resolve(args.index));
     indexComponents = idx.components || [];
+    // SELF-REUSE GUARD: on re-conversion, exclude THIS page's own prior output
+    // (manifest entries whose source === --self) so it regenerates instead of
+    // matching itself as "reuse". Other pages' generated components still match.
+    if (args.manifest && args.self) {
+      try {
+        const mf = await readJSON(resolve(args.manifest));
+        const selfPaths = new Set(Object.entries(mf.files || {})
+          .filter(([, v]) => v.source === args.self).map(([p]) => p.replace(/\\/g, '/')));
+        if (selfPaths.size) indexComponents = indexComponents.filter((c) => !selfPaths.has((c.path || '').replace(/\\/g, '/')));
+      } catch { /* no manifest */ }
+    }
     for (const comp of indexComponents) {
       if (comp.tagSignature) indexByTagSig.set(comp.tagSignature, comp);
     }
