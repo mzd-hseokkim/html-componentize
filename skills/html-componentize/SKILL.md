@@ -48,7 +48,14 @@ node scripts/detect-project.mjs --root . --out .componentize/detected.json
 This infers framework, language, styling, mode, indexRoot, componentsDir, AND
 **routing/layout convention** (`routing` = react-router/next/vue-router/nuxt +
 existing layout path; `layoutStrategy` = reuse-layout | hoist | inline) from
-`package.json` + config files + a file scan. Then:
+`package.json` + config files + a file scan.
+
+**Detection is a fast-path HINT from known conventions, not the source of truth**
+(`routing.basis = "known-conventions"`). When `routing.layoutPath` is null, the
+router is unusual, or the project is non-standard, VERIFY and extend it yourself:
+scan the workspace index for a `kind:"layout"` component, read the router config,
+check the app entry — then decide. Don't treat a hardcoded miss as "no layout".
+(`plan-files` already cross-checks the scanned index for a layout.) Then:
 - Present the detected config to the user for a one-line confirm.
 - Ask the questions in `references/interview.md` ONLY for fields not detected or
   listed under `ambiguities` (e.g. both react+vue present, Tailwind in use,
@@ -102,7 +109,7 @@ First, plan the directory layout (don't dump files flat):
 ```
 node scripts/plan-files.mjs --boundaries .componentize/boundaries.json \
      --data .componentize/data-spec.json --config .componentize/config.json \
-     --out .componentize/file-plan.json
+     --index .componentize/workspace-index.json --out .componentize/file-plan.json
 ```
 `file-plan.json` gives each component its target folder + file paths and import
 graph. Default structure is **co-location** (one folder per component:

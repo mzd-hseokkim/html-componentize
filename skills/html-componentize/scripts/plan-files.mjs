@@ -35,6 +35,20 @@ const structure = args.structure || cfg.structure || 'co-location';
 const layoutStrategy = args.layoutStrategy || cfg.layoutStrategy || 'inline'; // reuse-layout | hoist | inline
 const routing = cfg.routing || { library: null, outlet: null, hasLayout: false, layoutPath: null };
 
+// Existing layout discovery is LAYERED: detect-project's hardcoded path is just
+// a fast-path hint. The authoritative source is the SCANNED workspace index —
+// any component with kind 'layout' (found by name, not a hardcoded path). This
+// catches non-standard layouts (src/shell/RootShell.tsx etc.) the path list misses.
+let indexLayout = null;
+{
+  const idxPath = resolve(args.index || '.componentize/workspace-index.json');
+  try {
+    const idx = await readJSON(idxPath);
+    indexLayout = (idx.components || []).find((c) => c.kind === 'layout') || null;
+  } catch { /* no index */ }
+}
+if (!routing.layoutPath && indexLayout) { routing.layoutPath = indexLayout.path; routing.hasLayout = true; routing.layoutSource = 'workspace-index'; }
+
 const boundaries = await readJSON(bPath);
 const dataSpec = await (async () => { try { return await readJSON(dPath); } catch { return { groups: [] }; } })();
 
@@ -112,16 +126,20 @@ const chrome = Object.entries(boundaries.classifications)
 const contentNode = Object.entries(boundaries.classifications)
   .find(([, c]) => c.shellRole === 'page-content');
 
+// if an existing layout is known (hint OR index), prefer reusing it over hoisting
+const effectiveStrategy = (layoutStrategy !== 'inline' && routing.layoutPath) ? 'reuse-layout' : layoutStrategy;
+
 let layout;
-if (chrome.length === 0 || layoutStrategy === 'inline') {
+if (chrome.length === 0 || effectiveStrategy === 'inline') {
   layout = { strategy: 'inline', note: 'no routing/layout — chrome stays in the page component' };
-} else if (layoutStrategy === 'reuse-layout' && routing.layoutPath) {
+} else if (effectiveStrategy === 'reuse-layout' && routing.layoutPath) {
   layout = {
     strategy: 'reuse-layout',
     existingLayout: routing.layoutPath,
+    layoutSource: routing.layoutSource || 'convention-path',
     outlet: routing.outlet,
     chrome: chrome.map((c) => c.name),
-    instruction: `Do NOT regenerate chrome. The page renders ONLY its content (${contentNode ? contentNode[1].suggestedName || 'main' : 'main'}) into the existing layout's outlet (${routing.outlet}). Reconcile chrome only if the existing layout lacks it.`,
+    instruction: `Do NOT regenerate chrome. The page renders ONLY its content (${contentNode ? contentNode[1].suggestedName || 'main' : 'main'}) into the existing layout's outlet (${routing.outlet || 'VERIFY: open the layout file and find its outlet'}). Reconcile chrome only if the existing layout lacks it.`,
   };
 } else { // hoist
   const dir = structure === 'flat' ? outDir : `${outDir}/Layout`;

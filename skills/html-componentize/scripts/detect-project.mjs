@@ -111,7 +111,12 @@ const layoutPath = await anyExists(
   'src/components/Layout.tsx', 'src/components/Layout.jsx', 'src/components/Layout.vue',
   'src/layouts/default.vue', 'src/components/AppShell.tsx', 'src/components/AppLayout.tsx',
 );
-const routing = { library: router, outlet, hasLayout: !!layoutPath, layoutPath: layoutPath || null };
+// NOTE: this is a fast-path HINT from known conventions only (fixed dep names +
+// path list). It is NOT authoritative — the skill must verify/extend it (scan
+// the workspace index for a kind:layout component, read the router config) when
+// layoutPath is null or the project is non-standard. plan-files already falls
+// back to the scanned index for layout discovery.
+const routing = { library: router, outlet, hasLayout: !!layoutPath, layoutPath: layoutPath || null, basis: 'known-conventions' };
 note(`routing: ${router || 'none detected'}${layoutPath ? `, layout at ${layoutPath}` : ', no layout found'}`);
 
 // ---- ambiguities to resolve in the interview ----------------------------
