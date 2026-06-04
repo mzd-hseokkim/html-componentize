@@ -21,6 +21,10 @@ Defaults marked ★.
    is detected.) If integrate: **source root to index** (detected `indexRoot`).
 5. **Output location** — where generated files go (default detected
    `componentsDir`, else `src/components/generated`).
+5a. 🔍 **Shared dir & hoist** — `sharedDir` (default `<componentsDir>/common`)
+   holds chrome + primitives + hoisted shared components so pages don't couple.
+   `hoistPolicy`: chrome-always | on-second-use ★ | manual — when a page-owned
+   component is reused by another page, whether to auto-hoist it to common.
 5b. **Directory structure** — co-location ★ (one folder per component:
    `Card/{Card.tsx, Card.module.css, index.ts}`) / nested (item folders inside
    their container) / flat (everything in outDir). Drives `plan-files.mjs`.
@@ -53,6 +57,8 @@ Defaults marked ★.
   "mode": "integrate",
   "indexRoot": "src",
   "outDir": "src/components/generated",
+  "sharedDir": "src/components/common",
+  "hoistPolicy": "on-second-use",
   "structure": "co-location",
   "layoutStrategy": "reuse-layout",
   "routing": { "library": "react-router", "outlet": "<Outlet/>", "hasLayout": true, "layoutPath": "src/Layout.tsx" },

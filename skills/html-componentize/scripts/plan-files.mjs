@@ -36,6 +36,10 @@ const outDir = (args.outDir || cfg.outDir || 'src/components/generated').replace
 const structure = args.structure || cfg.structure || 'co-location';
 const layoutStrategy = args.layoutStrategy || cfg.layoutStrategy || 'inline'; // reuse-layout | hoist | inline
 const routing = cfg.routing || { library: null, outlet: null, hasLayout: false, layoutPath: null };
+const sharedDir = (args.sharedDir || cfg.sharedDir || `${outDir}/common`).replace(/\\/g, '/').replace(/\/$/, '');
+const hoistPolicy = args.hoistPolicy || cfg.hoistPolicy || 'on-second-use';
+// names that are inherently shared primitives → belong in sharedDir, never a page folder
+const PRIMITIVE_NAME = /(icon|button|badge|chip|avatar|spinner|skeleton|loading|state|panel|tooltip|tag|divider|logo|nav|header|footer)/i;
 
 // Existing layout discovery is LAYERED: detect-project's hardcoded path is just
 // a fast-path hint. The authoritative source is the SCANNED workspace index —
@@ -115,15 +119,26 @@ for (const [uid, c] of Object.entries(boundaries.classifications)) {
   ensure(name, { kind: 'component', classes: c.classes || [], uids: [uid] });
 }
 
+// ---- mark shared components (→ sharedDir, not the page folder) -----------
+// chrome (header/nav/footer) + general primitives are page-agnostic; placing
+// them under the page folder is what creates page-to-page coupling. Put them in
+// sharedDir from the start (proactive de-coupling).
+for (const comp of comps.values()) {
+  const shellRole = comp.uids.map((u) => boundaries.classifications[u]?.shellRole).find(Boolean);
+  comp.shellRole = shellRole || null;
+  comp.shared = shellRole === 'chrome' || PRIMITIVE_NAME.test(comp.name);
+}
+
 // ---- compute file paths per structure -----------------------------------
 function dirFor(comp) {
-  if (structure === 'flat') return outDir;
-  if (structure === 'nested' && comp.kind === 'component') {
+  const base = comp.shared ? sharedDir : outDir;
+  if (structure === 'flat') return base;
+  if (!comp.shared && structure === 'nested' && comp.kind === 'component') {
     // place item inside the container that imports it, if any
-    const parent = [...comps.values()].find((c) => c.imports.some((i) => i.kind === 'component' && i.name === comp.name));
+    const parent = [...comps.values()].find((c) => !c.shared && c.imports.some((i) => i.kind === 'component' && i.name === comp.name));
     if (parent) return `${outDir}/${parent.name}/${comp.name}`;
   }
-  return `${outDir}/${comp.name}`;
+  return `${base}/${comp.name}`;
 }
 
 const components = [];
@@ -136,7 +151,21 @@ for (const comp of comps.values()) {
   if (structure !== 'flat') files.index = `${dir}/index.${codeExt}`;
   if (comp.hasData) files.data = `${dir}/${comp.dataName}.data.${codeExt}`;
   const writeMode = await classifyFile(files.component);
-  components.push({ name: comp.name, kind: comp.kind, dir, files, writeMode, classes: comp.classes, imports: comp.imports, sourceUids: comp.uids });
+  components.push({ name: comp.name, kind: comp.kind, shared: comp.shared, shellRole: comp.shellRole, dir, files, writeMode, classes: comp.classes, imports: comp.imports, sourceUids: comp.uids });
+}
+
+// ---- reuse-time hoist plan ----------------------------------------------
+// boundaries flagged reuse matches that live in a PAGE folder (page-owned) as
+// hoistCandidate. If this is a new (second+) consumer, propose moving them to
+// sharedDir. The actual move+import-rewrite is a reconcile op (LLM, phase 4.5).
+const hoistPlan = [];
+if (hoistPolicy !== 'manual') {
+  for (const [, c] of Object.entries(boundaries.classifications)) {
+    if (c.label !== 'reuse' || !c.matchedComponent || !c.matchedComponent.hoistCandidate) continue;
+    const from = c.matchedComponent.path;
+    if (hoistPlan.find((h) => h.from === from)) continue;
+    hoistPlan.push({ name: c.matchedComponent.name, from, to: `${sharedDir}/${c.matchedComponent.name}`, reason: 'page-owned component reused by another page → hoist to shared' });
+  }
 }
 
 // ---- layout plan: separate page CHROME from route content ---------------
@@ -163,7 +192,7 @@ if (chrome.length === 0 || effectiveStrategy === 'inline') {
     instruction: `Do NOT regenerate chrome. The page renders ONLY its content (${contentNode ? contentNode[1].suggestedName || 'main' : 'main'}) into the existing layout's outlet (${routing.outlet || 'VERIFY: open the layout file and find its outlet'}). Reconcile chrome only if the existing layout lacks it.`,
   };
 } else { // hoist
-  const dir = structure === 'flat' ? outDir : `${outDir}/Layout`;
+  const dir = structure === 'flat' ? sharedDir : `${sharedDir}/Layout`;
   layout = {
     strategy: 'hoist',
     component: { name: 'Layout', dir, files: { component: `${dir}/Layout.${compExt}`, styles: `${dir}/Layout.module.css`, ...(structure !== 'flat' ? { index: `${dir}/index.${codeExt}` } : {}) } },
@@ -186,11 +215,12 @@ const reconvert = {
   manifest: manifestPath,
 };
 
-await writeJSON(outPath, { framework, lang, outDir, structure, layoutStrategy, routing, layout, reconvert, components });
+await writeJSON(outPath, { framework, lang, outDir, sharedDir, hoistPolicy, structure, layoutStrategy, routing, layout, reconvert, hoistPlan, components });
 
 console.log(JSON.stringify({
-  ok: true, out: outPath, framework, lang, structure, outDir,
+  ok: true, out: outPath, framework, lang, structure, outDir, sharedDir,
   layout: { strategy: layout.strategy, chrome: layout.chrome || [], outlet: layout.outlet || null, existingLayout: layout.existingLayout || null },
   reconvert,
-  components: components.map((c) => ({ name: c.name, kind: c.kind, dir: c.dir, writeMode: c.writeMode, imports: c.imports.map((i) => `${i.name}:${i.kind}`) })),
+  hoistPlan: hoistPlan.map((h) => `${h.name}: ${h.from} → ${h.to}`),
+  components: components.map((c) => ({ name: c.name, kind: c.kind, shared: c.shared, dir: c.dir, writeMode: c.writeMode })),
 }, null, 2));

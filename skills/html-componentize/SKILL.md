@@ -113,12 +113,19 @@ First, plan the directory layout (don't dump files flat):
 node scripts/plan-files.mjs --boundaries .componentize/boundaries.json \
      --data .componentize/data-spec.json --config .componentize/config.json \
      --index .componentize/workspace-index.json --manifest .componentize/manifest.json \
-     --out .componentize/file-plan.json
+     --sharedDir <config.sharedDir> --out .componentize/file-plan.json
 ```
 `file-plan.json` gives each component its target folder + file paths and import
 graph. Default structure is **co-location** (one folder per component:
 `Card/{Card.tsx, Card.module.css, index.ts}`; the list container also gets its
 `*.data.ts`). Honor `config.structure` (co-location | nested | flat).
+
+**Shared components (`file-plan` `sharedDir` + per-component `shared`)** — page
+chrome and general primitives (Icon/Button/StatePanel/Skeleton/…) are placed in
+`sharedDir` (default `<componentsDir>/common`), NOT the page folder, so later
+pages never couple to a component buried in the first page's folder. Honor each
+component's `shared` flag and put its files (component + `.module.css` + CSS) at
+its planned `dir`. The shared Layout (hoist) also lands in `sharedDir`.
 
 **Re-conversion (`file-plan.reconvert` + per-component `writeMode`)** — when a
 target already exists, do NOT blind-overwrite. Honor `writeMode`:
@@ -172,15 +179,32 @@ GATE: files land at their planned paths; every `rawHTML` node rendered; head
 font assets wired; scaffold defaults neutralized; no declaration is sourced from
 computed style; CSS came only from the `.module.css` the script emitted.
 
-### Phase 4.5 — Reuse decision
+### Phase 4.5 — Reuse decision + hoist
 For every node labeled `reuse`: import the indexed component, map data-spec
 fields onto its existing props. Record reuse-vs-generate in
-`.componentize/reuse-decision.json`. GATE: nothing is generated that already
-exists in the index. If you generated a component, re-index:
+`.componentize/reuse-decision.json`.
+
+**Reuse-time hoist (`file-plan.hoistPlan`)** — when a reused component is
+`ownership:"page-owned"` (lives in another page's folder), reusing it in-place
+couples pages. Per `hoistPolicy` (`chrome-always` | `on-second-use` | `manual`),
+hoist it to `sharedDir` as ONE op (use `writeMode:reconcile` — surgical + diff):
+  (a) move `pageA/X` → `common/X` (component **and** its `.module.css`/CSS — P6:
+      don't leave shared styles duplicated in two page globals),
+  (b) rewrite the original owner's imports + drop X from its barrel,
+  (c) the new consumer imports X from `common`,
+  (d) update `workspace-index` + `manifest` canonical path to `common` so the
+      3rd page reuses from there.
+**Partial-shared (P5):** if only PART of a subtree is shared (e.g. StatePanel
+shell shared, EmptyState/ErrorState copy page-specific), hoist the **reused
+node** only and keep the page-specific wrapper local — boundaries is node-level.
+**Icon dedup (P4):** identical `rawHTML` icons across pages → one `common/icons`
+set (match by rawHTML signature); keep page-only icons local.
+
+GATE: nothing is generated that already exists in the index; no shared component
+left page-owned. Re-index after generating/hoisting:
 ```
-node scripts/index-workspace.mjs --root <outDir> --out .componentize/workspace-index.json --tag generated
+node scripts/index-workspace.mjs --root <indexRoot> --out .componentize/workspace-index.json --tag generated
 ```
-(append generated entries so the next page reuses them).
 
 ### Phase 4.6 — Manifest (record what we generated)
 Snapshot the files this run produced so a future re-conversion can tell
@@ -190,6 +214,16 @@ node scripts/manifest.mjs --plan .componentize/file-plan.json --source <source.h
      --out .componentize/manifest.json
 ```
 GATE: manifest updated after every codegen.
+
+### Phase 4.7 — Dependency-direction lint
+Catch page→page coupling (a missed hoist):
+```
+node scripts/lint-deps.mjs --root <indexRoot> --out .componentize/coupling-report.json
+```
+Exit 1 = violations (a page imports a component from another page's folder).
+Surface them (also copy into `reuse-decision.json` → `couplingViolations`) and
+hoist the offending component to `sharedDir`. GATE: no coupling violations, or
+each is explicitly accepted by the user.
 
 ### Phase 5 — Verify fidelity (the proof)
 Spin up a dev server rendering the converted top-level component in isolation

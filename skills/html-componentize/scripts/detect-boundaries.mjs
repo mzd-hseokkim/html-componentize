@@ -197,7 +197,13 @@ walk(tree, (node, parent, depth) => {
     label = 'reuse';
     reason = `matches existing component ${match.comp.name} (${match.comp.path}) — ${match.reason}; CONFIRM`;
     confidence = Math.min(0.85, 0.5 + match.score * 0.35);
-    extra.matchedComponent = { name: match.comp.name, path: match.comp.path, props: match.comp.props, matchScore: Number(match.score.toFixed(2)) };
+    // ownership: shared dir → ok to import; page-owned → reusing it couples
+    // pages, so flag for hoist-to-common
+    const ownership = /(\/|^)(common|shared|ui|primitives?|layouts?)\//i.test(match.comp.path || '') ? 'shared' : 'page-owned';
+    extra.matchedComponent = {
+      name: match.comp.name, path: match.comp.path, props: match.comp.props,
+      matchScore: Number(match.score.toFixed(2)), ownership, hoistCandidate: ownership === 'page-owned',
+    };
   }
   // 2) repeated item → new-component (the list item)
   else if (repeatedUids.has(node.uid)) {

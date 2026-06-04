@@ -155,6 +155,10 @@ const detected = {
   lang, styling, stylingCandidates,
   mode: (framework || componentsDir) ? 'integrate' : 'greenfield',
   indexRoot, componentsDir, packageManager,
+  // where shared/common components live (chrome + primitives go here, not the
+  // page folder) — prevents page-to-page coupling via in-place reuse
+  sharedDir: (componentsDir || 'src/components') + '/common',
+  hoistPolicy: 'on-second-use', // chrome-always | on-second-use | manual
   scaffoldStyles,
   routing,
   // default layout strategy: reuse existing layout if present, else hoist into a
