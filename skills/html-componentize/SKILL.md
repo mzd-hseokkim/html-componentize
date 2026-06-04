@@ -67,7 +67,13 @@ signature). Skip for greenfield. GATE: index exists if mode=integrate.
 ```
 node scripts/parse-source.mjs --html <file> --out .componentize/source-map.json
 ```
-DOM tree + authored CSS rules + assets + flagged interactions. GATE: parse ok.
+DOM tree + authored CSS rules + assets + flagged interactions. Also captures:
+- **`node.rawHTML`** for inline `svg`/`math` (icons) — verbatim outerHTML, so
+  glyphs aren't dropped. Render these faithfully in phase 4 (see PATTERN.md).
+- **`document.fontLinks` / `headLinks` / `fontFaceCount`** — `<head>` font assets
+  that live outside the body and MUST be wired into the app (phase 4), else the
+  font falls back and renders wrong.
+GATE: parse ok; note any `rawMarkupNodes` and fonts in the summary.
 
 ### Phase 2 — Classify boundaries
 ```
@@ -112,8 +118,15 @@ Then, for each planned component (`new-component` and list-container `layout`):
    as the exact idiom: `className={styles.x}` / `:class`, props from
    `data-spec.json`, static text inline. Emit the data file (`plan.files.data`)
    and the `index` re-export. Wire imports per `plan.imports`.
-GATE: files land at their planned paths; no declaration is sourced from computed
-style; CSS came only from the `.module.css` the script emitted.
+3. **Inline SVG/raw markup**: for any node with `rawHTML`, render it verbatim
+   (React `dangerouslySetInnerHTML`, Vue inline `<svg>`/`v-html`). Never emit an
+   empty element where the source had an icon.
+4. **Head/font assets**: wire `document.fontLinks`/`headLinks` into the app
+   `index.html` `<head>` and import the global stylesheet (`global.css`, holds
+   `@font-face`) at the app entry.
+GATE: files land at their planned paths; every `rawHTML` node rendered; head
+font assets wired; no declaration is sourced from computed style; CSS came only
+from the `.module.css` the script emitted.
 
 ### Phase 4.5 — Reuse decision
 For every node labeled `reuse`: import the indexed component, map data-spec
@@ -132,15 +145,24 @@ Spin up a dev server rendering the converted top-level component in isolation
 node scripts/verify-fidelity.mjs --original <source.html> --result <http://localhost:PORT> \
      --viewports <from config> --threshold <from config> --out .componentize/verify
 ```
-Besides `verify-report.json` and the per-viewport PNGs, this writes a
-self-contained **`.componentize/verify/report.html`** — a side-by-side
-original / result / diff comparison per viewport with pass/fail + diff %. Always
-point the user to it; it's the human-readable comparison report.
+It waits for **web fonts** (`document.fonts.ready`) before shooting, captures the
+**full page** (not just above-the-fold; `--viewport-only` to opt out), and gates
+on THREE signals so subtle/localized differences can't slip through:
+- **global** pixel diff ratio > `--threshold` (default 1%), AND
+- **local** worst-block ratio ≥ `--blockThreshold` (default 40% — a single
+  missing/wrong element like an icon or panel lights up its block), AND
+- **DOM** structure signature mismatch (`domMatch:false` — e.g. a dropped inline
+  SVG makes the DOM differ).
 
-Exit 0 = pass. On fail (`diffRatio > threshold` or `domMatch:false`): open
-`report.html` (or `diff-<vp>.png`), locate the divergent region, fix the cause
-(usually a missed CSS rule, wrong class scope, or a layout node treated as a
-component), and re-run. **Do not declare success until phase 5 passes.**
+Besides `verify-report.json` and the per-viewport PNGs, it writes a
+self-contained **`.componentize/verify/report.html`** — side-by-side original /
+result / diff per viewport with global %, worst-block %, DOM match, and the
+`failReason`. Always point the user to it.
+
+Exit 0 = pass. On fail, read `localDiff.failReason`, open `report.html`, locate
+the region, fix the cause (missed CSS rule, wrong class scope, **dropped inline
+SVG/icon**, **unwired web font**, or a layout node treated as a component), and
+re-run. **Do not declare success until phase 5 passes.**
 
 ## Unknowns ledger
 Maintain `.componentize/unknowns.md`: anything flagged — `interactions` from

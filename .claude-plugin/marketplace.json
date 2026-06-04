@@ -9,7 +9,7 @@
       "name": "html-componentize",
       "source": "./",
       "description": "Deterministic HTML+CSS → React/Vue component conversion with fidelity verification.",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "category": "codegen"
     }
   ]

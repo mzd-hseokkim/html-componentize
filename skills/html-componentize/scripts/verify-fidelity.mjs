@@ -32,8 +32,11 @@ const toUrl = (s) => /^https?:|^file:/.test(s) ? s : pathToFileURL(isAbsolute(s)
 const originalUrl = toUrl(args.original);
 const resultUrl = toUrl(args.result);
 const outDir = resolve(args.out || '.componentize/verify');
-const threshold = Number(args.threshold ?? 0.01);          // max fraction of differing pixels
+const threshold = Number(args.threshold ?? 0.01);          // max GLOBAL fraction of differing pixels
 const pxThreshold = Number(args.pxThreshold ?? 0.1);        // per-pixel color sensitivity
+const blockThreshold = Number(args.blockThreshold ?? 0.4); // a single block this different = a missing/wrong element → fail
+const blockSize = Number(args.blockSize ?? 64);            // local diff grid cell (px)
+const fullPage = args.viewportOnly ? false : true;         // default: whole page, not just above-the-fold
 const viewports = String(args.viewports || '1280x800,375x667')
   .split(',').map((v) => { const [w, h] = v.split('x').map(Number); return { w, h }; });
 
@@ -53,14 +56,22 @@ const results = [];
 try {
   for (const vp of viewports) {
     const page = await browser.newPage({ viewport: { width: vp.w, height: vp.h } });
+    // wait for WEB FONTS before shooting — else FOUT makes both render the
+    // fallback font and font differences are silently masked.
+    const settle = async () => {
+      try { await page.evaluate('document.fonts && document.fonts.ready'); } catch {}
+      await page.waitForTimeout(150);
+    };
 
     await page.goto(originalUrl, { waitUntil: 'networkidle' });
-    const origShot = await page.screenshot({ fullPage: false });
+    await settle();
+    const origShot = await page.screenshot({ fullPage });
     const origDom = await page.evaluate(domSigScript);
     const origHeight = await page.evaluate('document.body.scrollHeight');
 
     await page.goto(resultUrl, { waitUntil: 'networkidle' });
-    const resShot = await page.screenshot({ fullPage: false });
+    await settle();
+    const resShot = await page.screenshot({ fullPage });
     const resDom = await page.evaluate(domSigScript);
     const resHeight = await page.evaluate('document.body.scrollHeight');
     await page.close();
@@ -87,17 +98,43 @@ try {
     const mismatch = pixelmatch(ca.data, cb.data, diff.data, width, height, { threshold: pxThreshold });
     const ratio = mismatch / (width * height);
 
+    // ---- LOCAL (block) diff: a small fully-different element (a missing icon)
+    // is invisible to the global ratio but lights up its block. pixelmatch
+    // paints differing pixels red → count red pixels per grid cell.
+    const cols = Math.ceil(width / blockSize), rows = Math.ceil(height / blockSize);
+    const blockDiff = new Float64Array(cols * rows);
+    const blockArea = new Int32Array(cols * rows);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (width * y + x) << 2;
+        const isRed = diff.data[i] > 200 && diff.data[i + 1] < 100 && diff.data[i + 2] < 100;
+        const bi = (Math.floor(y / blockSize) * cols) + Math.floor(x / blockSize);
+        blockArea[bi]++;
+        if (isRed) blockDiff[bi]++;
+      }
+    }
+    const hotBlocks = [];
+    let maxBlockRatio = 0;
+    for (let bi = 0; bi < blockDiff.length; bi++) {
+      const r = blockArea[bi] ? blockDiff[bi] / blockArea[bi] : 0;
+      if (r > maxBlockRatio) maxBlockRatio = r;
+      if (r >= blockThreshold) hotBlocks.push({ col: bi % cols, row: Math.floor(bi / cols), ratio: Number(r.toFixed(3)) });
+    }
+
     const tag = `${vp.w}x${vp.h}`;
     await writeFile(`${outDir}/diff-${tag}.png`, PNG.sync.write(diff));
     await writeFile(`${outDir}/original-${tag}.png`, origShot);
     await writeFile(`${outDir}/result-${tag}.png`, resShot);
 
+    const pass = ratio <= threshold && maxBlockRatio < blockThreshold && origDom === resDom;
     results.push({
       viewport: tag,
       diffPixels: mismatch,
       diffRatio: Number(ratio.toFixed(5)),
-      pass: ratio <= threshold,
+      pass,
       domMatch: origDom === resDom,
+      localDiff: { blockSize, maxBlockRatio: Number(maxBlockRatio.toFixed(3)), hotBlocks: hotBlocks.length, blockThreshold,
+        failReason: pass ? null : (origDom !== resDom ? 'DOM structure differs' : ratio > threshold ? 'global diff over threshold' : 'localized element diff (missing/wrong element)') },
       scrollHeight: { original: origHeight, result: resHeight, delta: resHeight - origHeight },
       artifacts: { diff: `diff-${tag}.png`, original: `original-${tag}.png`, result: `result-${tag}.png` },
     });
@@ -107,7 +144,7 @@ try {
 }
 
 const pass = results.every((r) => r.pass);
-const report = { originalUrl, resultUrl, threshold, pass, viewports: results, outDir };
+const report = { originalUrl, resultUrl, threshold, blockThreshold, fullPage, pass, viewports: results, outDir };
 await writeFile(`${outDir}/verify-report.json`, JSON.stringify(report, null, 2), 'utf8');
 
 // ---- human-readable side-by-side HTML report (self-contained) ----------
@@ -117,9 +154,11 @@ const sections = results.map((r) => `
   <section class="vp ${r.pass ? '' : 'failed'}">
     <h2>${esc(r.viewport)} ${badge(r.pass)}</h2>
     <div class="stats">
-      <span>diff: <b>${(r.diffRatio * 100).toFixed(3)}%</b> (${r.diffPixels}px) · threshold ${(threshold * 100).toFixed(2)}%</span>
+      <span>global diff: <b>${(r.diffRatio * 100).toFixed(3)}%</b> (${r.diffPixels}px) · threshold ${(threshold * 100).toFixed(2)}%</span>
+      <span>worst block: <b>${(r.localDiff.maxBlockRatio * 100).toFixed(0)}%</b> · ${r.localDiff.hotBlocks} hot block(s)</span>
       <span>DOM ${r.domMatch ? '✓ match' : '✗ differ'}</span>
-      <span>scroll Δ ${r.scrollHeight.delta}px (orig ${r.scrollHeight.original} / result ${r.scrollHeight.result})</span>
+      <span>scroll Δ ${r.scrollHeight.delta}px</span>
+      ${r.localDiff.failReason ? `<span style="color:#dc2626">✗ ${esc(r.localDiff.failReason)}</span>` : ''}
     </div>
     <div class="grid">
       <figure><figcaption>original</figcaption><img src="${esc(r.artifacts.original)}" loading="lazy"></figure>

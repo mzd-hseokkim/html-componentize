@@ -59,6 +59,26 @@ import { cards } from './cards.data';
 </template>
 ```
 
+## Inline SVG / raw markup (`node.rawHTML` in source-map)
+
+`svg`/`math` nodes carry a verbatim `rawHTML` outerHTML and no children. SVG is
+valid in a Vue template, so prefer pasting it inline verbatim; or use `v-html`:
+
+```vue
+<button :class="styles['qty-button']" v-html="minusIconSvg" />
+<!-- or paste the <svg>…</svg> directly into the template, unchanged -->
+```
+
+Never leave an empty `<button>` where the source had an icon.
+
+## Web fonts & head assets (`source-map.document`)
+
+`document.fontLinks` / `fontFaceCount` list fonts the ORIGINAL `<head>` loads
+(Google Fonts `<link>`, `@font-face`). They aren't in any component — wire them
+into `index.html` `<head>` and/or import the global stylesheet (`global.css`
+from `css-to-modules --globals`, which holds `@font-face`) at the app entry, or
+`font-family` falls back to the wrong font.
+
 ## Reuse (boundaries label = `reuse`)
 
 Import the indexed `.vue` component and bind data-spec fields to its existing

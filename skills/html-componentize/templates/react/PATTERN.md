@@ -61,6 +61,33 @@ export function CardGrid() {
 }
 ```
 
+## Inline SVG / raw markup (`node.rawHTML` in source-map)
+
+Nodes whose tag is `svg`/`math` carry a `rawHTML` field (outerHTML, verbatim) and
+have NO children — parse-source captured them so the glyph isn't dropped. Render
+it faithfully; do NOT retype the SVG paths.
+
+```tsx
+// a button containing an inline icon:
+<button className={styles['qty-button']}
+        dangerouslySetInnerHTML={{ __html: minusIconSvg }} />
+// where minusIconSvg is the rawHTML string from source-map (kept verbatim).
+```
+
+If the same icon repeats, hoist the rawHTML string to one `const` (or a tiny
+`<Icon svg={...}/>` wrapper) and reuse it. Never emit an empty `<button>` where
+the source had an icon — that's the failure this guards against.
+
+## Web fonts & head assets (`source-map.document`)
+
+`document.fontLinks` / `headLinks` / `fontFaceCount` list fonts loaded in the
+ORIGINAL `<head>` (e.g. Google Fonts `<link>`, `@font-face`). They live outside
+the body, so they are NOT in any component. Wire them into the app or the
+`font-family` rule renders with a fallback (wrong font):
+- copy the font `<link>`s into the app's `index.html` `<head>`, AND/OR
+- ensure the global stylesheet (`global.css` from `css-to-modules --globals`,
+  which holds `@font-face`) is imported at the app entry.
+
 ## Reuse (boundaries label = `reuse`)
 
 Do NOT generate. Import the indexed component and map data-spec fields onto its

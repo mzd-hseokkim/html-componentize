@@ -13,6 +13,11 @@ export const UID_ATTR = 'data-cz-uid';
  *  - text: direct (non-whitespace) text content of THIS node only, verbatim.
  *  - attrs excludes class/id/style and the uid attr.
  */
+// tags whose inner markup is NOT componentizable and must be carried VERBATIM
+// (icons, math, embedded media). We capture their outerHTML instead of
+// recursing — otherwise the glyph/markup is silently dropped at codegen.
+export const RAW_TAGS = new Set(['svg', 'math']);
+
 export function buildTree($, el, counter = { n: 0 }) {
   const uid = `n${counter.n++}`;
   $(el).attr(UID_ATTR, uid);
@@ -26,6 +31,13 @@ export function buildTree($, el, counter = { n: 0 }) {
   for (const [k, v] of Object.entries(raw)) {
     if (k === 'class' || k === 'id' || k === 'style' || k === UID_ATTR) continue;
     attrs[k] = v;
+  }
+
+  // raw-passthrough elements (e.g. inline <svg>): capture outerHTML verbatim,
+  // strip our injected uid attr, do NOT recurse. Codegen inlines it as-is.
+  if (RAW_TAGS.has(el.name)) {
+    const html = ($.html(el) || '').replace(new RegExp(`\\s*${UID_ATTR}="[^"]*"`, 'g'), '');
+    return { uid, tag: el.name, classes, idAttr, attrs, text: '', children: [], rawHTML: html };
   }
 
   // direct text only (verbatim — never rewritten)

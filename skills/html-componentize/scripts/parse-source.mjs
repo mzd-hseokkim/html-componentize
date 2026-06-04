@@ -127,21 +127,44 @@ $('script:not([src])').each((i, el) => {
   if (code) scriptBlocks.push({ index: i, length: code.length });
 });
 
+// ---- document head assets (fonts!) — must be wired into the app ----------
+// These live OUTSIDE the body subtree, so codegen would otherwise drop them:
+// font <link>s, preconnects, and @font-face rules. Missing them = wrong font.
+const headLinks = [];
+$('head link, link').each((i, el) => {
+  const rel = $(el).attr('rel'); const href = $(el).attr('href');
+  if (rel && href) headLinks.push({ rel, href, asAttr: $(el).attr('as') || null });
+});
+let fontFaceCount = 0;
+const fontFamilies = new Set();
+for (const { css } of cssSources) {
+  for (const _ of (css || '').matchAll(/@font-face/g)) fontFaceCount++;
+  for (const m of (css || '').matchAll(/@font-face[^}]*?font-family\s*:\s*['"]?([^;'"}]+)/g)) fontFamilies.add(m[1].trim());
+}
+const fontLinks = headLinks.filter((l) => /font/i.test(l.href) || /preconnect/i.test(l.rel) || (l.rel === 'stylesheet' && /fonts?\./i.test(l.href)));
+
+// count raw-passthrough (inline svg/math) nodes carried verbatim
+let rawNodes = 0;
+walk(tree, (n) => { if (n.rawHTML) rawNodes++; });
+
 await writeJSON(outPath, {
   source: { htmlFile: args.html, cssSources: cssSources.map((c) => ({ origin: c.origin, missing: !!c.missing })) },
   tree,
   css: { rules },
   classInventory: [...classSet].sort(),
   assets,
+  document: { title: $('title').first().text() || null, headLinks, fontLinks, fontFaceCount, fontFamilies: [...fontFamilies] },
   interactions: { inline: interactions, scriptBlocks },
 });
 
 console.log(JSON.stringify({
   ok: true,
   out: outPath,
-  nodes: classSet.size === undefined ? 0 : (() => { let n = 0; walk(tree, () => n++); return n; })(),
+  nodes: (() => { let n = 0; walk(tree, () => n++); return n; })(),
   cssRules: rules.length,
   classes: classSet.size,
+  rawMarkupNodes: rawNodes,
   assets: Object.fromEntries(Object.entries(assets).map(([k, v]) => [k, v.length])),
+  fonts: { faceRules: fontFaceCount, families: [...fontFamilies], links: fontLinks.length },
   interactionsFlagged: interactions.length + scriptBlocks.length,
 }, null, 2));

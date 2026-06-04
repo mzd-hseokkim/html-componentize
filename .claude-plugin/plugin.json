@@ -1,6 +1,6 @@
 {
   "name": "html-componentize",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Convert static HTML+CSS into React or Vue components deterministically, preserving authored CSS, reusing existing components, and verifying fidelity by render-and-pixel-diff.",
   "author": {
     "name": "Hyeongseok Kim",
